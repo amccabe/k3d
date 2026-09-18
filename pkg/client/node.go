@@ -835,9 +835,9 @@ func NodeWaitForLogMessage(ctx context.Context, runtime runtimes.Runtime, node *
 		//
 		// A runtime can briefly refuse to open the stream after the container
 		// starts, even if the node is fine. Podman's journald log reader has been
-		// seen answering the first logs request of a fresh API service with a 500.
-		// A node that is still running gets its own retries here, same limit as
-		// the crash loop retries but a separate retry budget.
+		// seen answering a logs request with a 500 in a process that had not yet
+		// opened the journal. A node that is still running gets its own retries
+		// here, same limit as the crash loop retries but a separate retry budget.
 		var out io.ReadCloser
 		var err error
 		for attempt := 0; ; attempt++ {
