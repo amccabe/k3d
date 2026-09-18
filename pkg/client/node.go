@@ -856,7 +856,9 @@ func NodeWaitForLogMessage(ctx context.Context, runtime runtimes.Runtime, node *
 			case <-time.After(500 * time.Millisecond):
 			}
 		}
-		defer out.Close()
+		if out != nil {
+			defer out.Close()
+		}
 
 		// We're scanning the logstream continuously line-by-line
 		scanner := bufio.NewScanner(out)
