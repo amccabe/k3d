@@ -846,6 +846,9 @@ func NodeWaitForLogMessage(ctx context.Context, runtime runtimes.Runtime, node *
 				break
 			}
 			running, _, statusErr := runtime.GetNodeStatus(ctx, node)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if statusErr != nil || !running || attempt >= backOffLimit-1 {
 				return fmt.Errorf("Failed waiting for log message '%s' from node '%s': %w", message, node.Name, err)
 			}
