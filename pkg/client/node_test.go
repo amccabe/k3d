@@ -42,6 +42,10 @@ type logStreamRuntime struct {
 	failOpens int
 	running   bool
 	opens     int
+	// When set, the status probe outlives the context it was given: it calls
+	// the hook, waits for the context to end, and answers with the context's
+	// error, the way a probe that runs past the caller's deadline does.
+	outliveContext func()
 }
 
 func (r *logStreamRuntime) GetNodeLogs(_ context.Context, _ *k3d.Node, _ time.Time, _ *runtimeTypes.NodeLogsOpts) (io.ReadCloser, error) {
@@ -52,7 +56,12 @@ func (r *logStreamRuntime) GetNodeLogs(_ context.Context, _ *k3d.Node, _ time.Ti
 	return io.NopCloser(strings.NewReader("k3s is up and running\n")), nil
 }
 
-func (r *logStreamRuntime) GetNodeStatus(_ context.Context, _ *k3d.Node) (bool, string, error) {
+func (r *logStreamRuntime) GetNodeStatus(ctx context.Context, _ *k3d.Node) (bool, string, error) {
+	if r.outliveContext != nil {
+		r.outliveContext()
+		<-ctx.Done()
+		return false, "", ctx.Err()
+	}
 	return r.running, "running", nil
 }
 
@@ -83,4 +92,34 @@ func Test_NodeWaitForLogMessage_NoRetryWhenNodeNotRunning(t *testing.T) {
 	if rt.opens != 1 {
 		t.Errorf("expected exactly 1 stream open with no retry, got %d", rt.opens)
 	}
+}
+
+// A context that ends while the status probe runs has to come back as the
+// context's error, not as the log-open error it interrupted: callers such as
+// UpdateLoadbalancerConfig choose their recovery with errors.Is against
+// context.DeadlineExceeded.
+func Test_NodeWaitForLogMessage_ReportsContextErrorFromStatusProbe(t *testing.T) {
+	node := &k3d.Node{Name: "k3d-test-server-0", Role: k3d.ServerRole}
+
+	t.Run("deadline exceeded", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		rt := &logStreamRuntime{failOpens: 1, running: true, outliveContext: func() {}}
+
+		err := NodeWaitForLogMessage(ctx, rt, node, "k3s is up and running", time.Time{})
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("expected context.DeadlineExceeded from a probe that ran past the deadline, got: %v", err)
+		}
+	})
+
+	t.Run("canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		rt := &logStreamRuntime{failOpens: 1, running: true, outliveContext: cancel}
+
+		err := NodeWaitForLogMessage(ctx, rt, node, "k3s is up and running", time.Time{})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled from a probe that outlived the context, got: %v", err)
+		}
+	})
 }
